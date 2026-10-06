@@ -1,1 +1,59 @@
-
+/** 공개 조회는 getPublicData만, 신청자 조회 API는 제공하지 않습니다. */
+const PUBLIC_KEYS_ = ['appName','subtitle','trainingDate','trainingPlace','target','capacity','registrationOpen','privacyController','privacyPurpose','privacyRetention','privacyContact','privacyVersion','notice'];
+function db_() {
+  const id = PropertiesService.getScriptProperties().getProperty('DB_ID');
+  if (!id) throw new Error('먼저 setupTrainingDB를 실행해 주세요.');
+  return SpreadsheetApp.openById(id);
+}
+function settings_() {
+  const rows = db_().getSheetByName('Settings').getDataRange().getDisplayValues();
+  return Object.fromEntries(rows.slice(1).filter(r => r[0]).map(r => [r[0],r[1]]));
+}
+function getPublicData() {
+  const s = settings_();
+  return Object.fromEntries(PUBLIC_KEYS_.map(k => [k,s[k] || '']));
+}
+function doGet(e) {
+  if (e && e.parameter.api === 'settings') {
+    const cb = e.parameter.callback || '';
+    if (!/^trainingCallback_[a-zA-Z0-9_]+$/.test(cb)) throw new Error('잘못된 호출입니다.');
+    return ContentService.createTextOutput(cb+'('+JSON.stringify(getPublicData()).replace(/</g,'\\u003c')+');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return HtmlService.createHtmlOutputFromFile('index').setTitle(settings_().appName || '교사에게 필요한 앱 만들어 쓰기').addMetaTag('viewport','width=device-width, initial-scale=1');
+}
+function submitRegistration(p) {
+  if (!p || typeof p !== 'object') throw new Error('신청 내용을 확인해 주세요.');
+  const name = String(p.name || '').trim();
+  const school = String(p.school || '').trim();
+  const position = String(p.position || '');
+  const phone = String(p.phone || '').replace(/[^0-9]/g,'');
+  const requestId = String(p.requestId || '');
+  if (name.length < 2 || name.length > 30 || school.length < 2 || school.length > 80) throw new Error('성명과 소속을 확인해 주세요.');
+  if (!['교사','수석교사','교감','교장','기타'].includes(position)) throw new Error('직급을 선택해 주세요.');
+  if (!/^0\d{8,10}$/.test(phone)) throw new Error('연락처를 확인해 주세요.');
+  if (p.consent !== true) throw new Error('개인정보 수집·이용 동의가 필요합니다.');
+  if (!/^[a-zA-Z0-9-]{16,80}$/.test(requestId)) throw new Error('신청 화면을 다시 열어 주세요.');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sh = db_().getSheetByName('Registrations');
+    const rows = sh.getDataRange().getDisplayValues().slice(1);
+    if (rows.some(r => r[9] === requestId)) return {ok:true,message:'신청이 접수되었습니다.'};
+    const s = settings_();
+    if (s.registrationOpen !== 'TRUE') throw new Error('현재 신청을 받지 않습니다.');
+    if (!s.privacyController || !s.privacyRetention || !s.privacyContact || !s.privacyPurpose || !s.privacyVersion) throw new Error('운영자의 개인정보 안내 설정이 필요합니다.');
+    if (String(p.privacyVersion) !== s.privacyVersion) throw new Error('개인정보 안내가 변경되었습니다. 새로고침 후 확인해 주세요.');
+    if (rows.some(r => r[5] === phone)) throw new Error('이미 신청된 연락처입니다. 변경이 필요하면 운영자에게 문의해 주세요.');
+    const capacity = Number(s.capacity);
+    if (!Number.isInteger(capacity) || capacity < 1) throw new Error('정원 설정이 필요합니다.');
+    if (rows.length >= capacity) throw new Error('신청 정원이 마감되었습니다.');
+    // 문자열을 수식으로 해석하지 않도록 처리합니다.
+    const safe = v => /^[=+\-@]/.test(v) ? "'"+v : v;
+    sh.getRange(sh.getLastRow()+1,1,1,11).setNumberFormat('@').setValues([[
+      Utilities.getUuid(),Utilities.formatDate(new Date(),'Asia/Seoul','yyyy-MM-dd HH:mm:ss'),safe(name),safe(school),position,phone,'동의',s.privacyVersion,'접수',requestId,
+      JSON.stringify({controller:s.privacyController,purpose:s.privacyPurpose,items:'성명, 소속, 직급, 연락처',retention:s.privacyRetention,contact:s.privacyContact})
+    ]]);
+    SpreadsheetApp.flush();
+    return {ok:true,message:'신청이 접수되었습니다.'};
+  } finally { lock.releaseLock(); }
+}
