@@ -212,21 +212,35 @@ async function loadRegistrations(){if(!adminToken||!hostAllowed||registrationsBu
 $('registrationsRefresh').onclick=loadRegistrations;
 $('registrationSearch').oninput=renderRegistrations;
 function toast(message){clearTimeout(toastTimer);$('toast').textContent=message;toastTimer=setTimeout(()=>{$('toast').textContent=''},5000)}
-function page(id){if(activeEditor&&id!==activePage){toast('편집 중인 항목을 먼저 저장하거나 취소해 주세요.');history.replaceState(null,'','#'+activePage);return}if(['admin','registrations'].includes(id)&&!adminToken){id='home';setTimeout(adminEntry,0)}if(!['admin','registrations'].includes(id)&&!menus.some(m=>m[0]===id))id='home';activePage=id;document.querySelectorAll('.page').forEach(s=>s.hidden=s.id!==id);$('nav').querySelectorAll('button').forEach(b=>b.setAttribute('aria-current',b.dataset.page===id?'page':'false'));postHostState();if(id==='registrations'&&!registrationsBusy)loadRegistrations();}
+function page(id){if(activeEditor&&id!==activePage){toast('편집 중인 항목을 먼저 저장하거나 취소해 주세요.');history.replaceState(null,'','#'+activePage);return}if(['admin','registrations'].includes(id)&&!adminToken){id='home';setTimeout(adminEntry,0)}if(!['admin','registrations'].includes(id)&&!menus.some(m=>m[0]===id))id='home';activePage=id;document.querySelectorAll('.page').forEach(s=>s.hidden=s.id!==id);$('nav').querySelectorAll('button').forEach(b=>b.setAttribute('aria-current',b.dataset.page===id?'page':'false'));postHostState();if(id==='registrations'&&!registrationsBusy)loadRegistrations();if(id==='apply')Promise.resolve().then(refreshApplicationStatus);}
 function go(id){if(activeEditor&&id!==activePage){toast('편집 중인 항목을 먼저 저장하거나 취소해 주세요.');return}location.hash=id;page(id);window.scrollTo({top:0,behavior:'smooth'})}
 function render(){if(activeEditor)return;applyContent();['appName','subtitle','target','trainingDate','trainingPlace','notice'].forEach(k=>$(k).textContent=settings[k]||'확정 후 안내');document.title=settings.appName;$('privacyContact').textContent=settings.privacyContact||'운영자 연락처 확정 후 안내';
 $('policy').textContent='개인정보 수집·이용 안내\n수집·이용 주체: '+(settings.privacyController||'확정 후 안내')+'\n목적: '+settings.privacyPurpose+'\n항목: 성명, 소속, 직급, 연락처\n보유·이용 기간: '+(settings.privacyRetention||'확정 후 안내')+'\n동의를 거부할 수 있으며, 미동의 시 신청이 제한됩니다.\n신청 정보는 공개 페이지에 표시하지 않습니다.';
 const linked = !live && !!GAS_URL;$('gateway').hidden=!linked;$('form').hidden=linked;if(linked)$('applyLink').href=serviceUrl('apply');
-$('submit').disabled=!hostAllowed||(!live&&!GAS_URL&&!previewOnly)||busy||!loaded||(live&&settings.registrationOpen!=='TRUE');$('submit').textContent=busy?'접수하는 중…':live?'연수 신청하기':previewOnly?'신청 흐름 체험하기':'신청 연결 준비 중';
-$('applyInfo').textContent=live?(loaded?(settings.registrationOpen==='TRUE'?'신청 내용을 입력해 주세요.':(settings.registrationFull?'신청 정원이 마감되었습니다.':'현재 신청을 받지 않습니다.')):'Loading...'):linked?'신청은 GAS 신청 페이지에서 진행합니다.':(previewOnly?'시안입니다. 실제 정보를 입력할 필요 없이 신청 흐름을 체험할 수 있습니다.':'신청 연결이 준비되지 않았습니다. 운영자에게 문의해 주세요.');
+const applicationClosed=live&&loaded&&(settings.registrationFull||settings.registrationOpen!=='TRUE');
+$('form').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=applicationClosed||busy||!loaded||!hostAllowed);
+$('submit').disabled=!hostAllowed||(!live&&!GAS_URL&&!previewOnly)||busy||!loaded||applicationClosed;$('submit').textContent=busy?'접수하는 중…':applicationClosed?'신청 마감':live?'연수 신청하기':previewOnly?'신청 흐름 체험하기':'신청 연결 준비 중';
+$('applyInfo').textContent=live?(loaded?(settings.registrationFull?'모집 인원이 모두 차서 신청을 마감했습니다.':settings.registrationOpen==='TRUE'?'신청 내용을 입력해 주세요.':'현재 신청을 받지 않습니다.'):'Loading...'):linked?'신청은 GAS 신청 페이지에서 진행합니다.':(previewOnly?'시안입니다. 실제 정보를 입력할 필요 없이 신청 흐름을 체험할 수 있습니다.':'신청 연결이 준비되지 않았습니다. 운영자에게 문의해 주세요.');
 $('formStatus').textContent=live?'신청 정원: '+settings.capacity+'명 · 저장 결과가 확인된 뒤 완료를 안내합니다.':'시안 입력은 전송하거나 저장하지 않습니다.';
 drawPencils();postHostState();
 }
 window.addEventListener('hashchange',()=>page(location.hash.slice(1)));page(window.START_PAGE||location.hash.slice(1));render();
 if(live){google.script.run.withSuccessHandler(s=>{if(!adminToken){settings=s;loaded=true;render()}}).withFailureHandler(()=>{toast('설정을 불러오지 못했습니다. 새로고침해 주세요.');$('notice').textContent='설정 불러오기 실패';}).getPublicData()}
 else if(GAS_URL){const cb='trainingCallback_'+Date.now();const script=document.createElement('script');let timer;function cleanup(){clearTimeout(timer);script.remove();delete window[cb]}window[cb]=s=>{settings=s;loaded=true;render();cleanup()};script.src=GAS_URL+'?api=settings&callback='+cb;script.onerror=()=>{cleanup();toast('최신 안내를 불러오지 못했습니다. 신청 페이지에서 확인해 주세요.');$('notice').textContent='최신 설정 불러오기 실패 · 안내 내용은 시안 기본값입니다.'};document.head.append(script);timer=setTimeout(()=>script.onerror(),15000)}
-$('form').addEventListener('submit',e=>{e.preventDefault();if(busy||!loaded||!hostAllowed)return;const data=Object.fromEntries(new FormData(e.target));data.phone=data.phone.replace(/[^0-9]/g,'');if(!validPhone(data.phone)){toast('전화번호를 확인해 주세요. 예: 010-1234-5678');$('phone').focus();return}data.consent=$('consent').checked;data.requestId=requestId;data.privacyVersion=settings.privacyVersion;
-if(!live&&!previewOnly){toast('GAS 연결 설정이 필요합니다.');return}if(!live){toast('체험 완료! 실제 신청 정보는 저장되지 않았습니다.');return}busy=true;render();google.script.run.withSuccessHandler(r=>{busy=false;if(r&&r.ok){if(r.settings)settings=r.settings;e.target.reset();requestId=uuid();openModal('신청 접수 완료','');$('modalBody').textContent=r.message;toast(r.message)}else toast('접수 결과를 확인하지 못했습니다. 다시 시도해 주세요.');render()}).withFailureHandler(err=>{busy=false;render();toast(err.message||'접수 중 오류가 발생했습니다. 다시 시도해 주세요.');}).submitRegistration(data)});
+$('form').addEventListener('submit',e=>{e.preventDefault();if(busy||!loaded||!hostAllowed)return;if(live&&(settings.registrationFull||settings.registrationOpen!=='TRUE')){toast(settings.registrationFull?'모집 인원이 모두 차서 신청을 마감했습니다.':'현재 신청을 받지 않습니다.');return}const data=Object.fromEntries(new FormData(e.target));data.phone=data.phone.replace(/[^0-9]/g,'');if(!validPhone(data.phone)){toast('전화번호를 확인해 주세요. 예: 010-1234-5678');$('phone').focus();return}data.consent=$('consent').checked;data.requestId=requestId;data.privacyVersion=settings.privacyVersion;
+if(!live&&!previewOnly){toast('GAS 연결 설정이 필요합니다.');return}if(!live){toast('체험 완료! 실제 신청 정보는 저장되지 않았습니다.');return}busy=true;render();google.script.run.withSuccessHandler(r=>{busy=false;if(r&&r.ok){if(r.settings)settings=r.settings;e.target.reset();requestId=uuid();openModal('신청 접수 완료','');$('modalBody').textContent=r.message;toast(r.message)}else toast('접수 결과를 확인하지 못했습니다. 다시 시도해 주세요.');render()}).withFailureHandler(err=>{busy=false;render();toast(err.message||'접수 중 오류가 발생했습니다. 다시 시도해 주세요.');refreshApplicationStatus();}).submitRegistration(data)});
+// 신청 화면을 열어 둔 참가자에게도 마감 상태를 반영합니다. 입력 내용은 유지합니다.
+let applicationStatusBusy=false;
+async function refreshApplicationStatus(){
+  if(!live||!loaded||!hostAllowed||busy||adminToken||activeEditor||applicationStatusBusy||activePage!=='apply'||document.hidden)return;
+  applicationStatusBusy=true;
+  try{
+    const s=await rpc('getPublicData');
+    if(!adminToken&&!activeEditor&&!busy){settings=s;render();}
+  }catch(e){/* 일시적인 조회 실패에는 현재 입력과 상태를 유지합니다. */}
+  finally{applicationStatusBusy=false;}
+}
+if(live){setInterval(refreshApplicationStatus,20000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshApplicationStatus()});}
 function openModal(title,html){$('modalTitle').textContent=title;$('modalBody').innerHTML=html;$('modal').showModal()}
 $('closeModal').onclick=()=> $('modal').close();
 const promptText='교사용 수업 준비 체크 앱을 만들어 주세요.\n대상: 교사\n기능: 할 일 추가, 완료 표시, 삭제, 브라우저 저장\n디자인: 파스텔톤 카드, PC 85% 폭·모바일 100% 반응형\n입력: Enter 제출, 저장 중 버튼 비활성화\n안내: alert 대신 Toast, 삭제 확인은 모달\nHTML·CSS·JavaScript를 포함한 전체 코드로 주세요.\n실행 방법과 데이터 저장 위치도 설명해 주세요.';
